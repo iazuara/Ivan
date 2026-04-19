@@ -24,6 +24,11 @@ import {
   mergeCapturedState,
   readFileAsBase64,
 } from './utils/pdfFacturas.js'
+import {
+  getAnthropicMessagesUrl,
+  hintAnthropic404,
+  readAnthropicErrorDetail,
+} from './utils/anthropicUrl.js'
 
 const TABS = [
   { id: 'productos', label: 'Productos' },
@@ -333,7 +338,7 @@ posibles riesgos o omisiones, y sugerencias breves. Responde en español.
 Datos:
 ${JSON.stringify(snapshotForIa, null, 2)}`
 
-      const res = await fetch('/anthropic-api/v1/messages', {
+      const res = await fetch(getAnthropicMessagesUrl(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -346,14 +351,12 @@ ${JSON.stringify(snapshotForIa, null, 2)}`
           messages: [{ role: 'user', content: prompt }],
         }),
       })
-      const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const msg =
-          data?.error?.message ||
-          data?.message ||
-          `Error HTTP ${res.status}`
-        throw new Error(msg)
+        if (res.status === 404) throw new Error(hintAnthropic404())
+        const detail = await readAnthropicErrorDetail(res)
+        throw new Error(detail || `Error HTTP ${res.status}`)
       }
+      const data = await res.json().catch(() => ({}))
       const text =
         data?.content?.map((b) => (b.text ? b.text : '')).join('\n') || ''
       setIaText(text || 'Sin contenido en la respuesta.')
@@ -470,7 +473,7 @@ Reglas:
         })
       }
 
-      const res = await fetch('/anthropic-api/v1/messages', {
+      const res = await fetch(getAnthropicMessagesUrl(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -484,14 +487,12 @@ Reglas:
           messages: [{ role: 'user', content }],
         }),
       })
-      const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const msg =
-          data?.error?.message ||
-          data?.message ||
-          `Error HTTP ${res.status}`
-        throw new Error(msg)
+        if (res.status === 404) throw new Error(hintAnthropic404())
+        const detail = await readAnthropicErrorDetail(res)
+        throw new Error(detail || `Error HTTP ${res.status}`)
       }
+      const data = await res.json().catch(() => ({}))
       const text =
         data?.content?.map((b) => (b.text ? b.text : '')).join('\n') || ''
       const raw = extractJsonObjectFromText(text)
@@ -593,8 +594,12 @@ Reglas:
           <p className="mt-1 text-xs text-gray-600">
             Sube la factura comercial del proveedor y/o la del agente aduanal. La IA
             leerá los PDF y rellenará productos (y gastos en MXN si constan en la
-            documentación del agente). Requiere API Key y el proxy de Vite en
-            desarrollo.
+            documentación del agente). Requiere API Key y ejecutar la app con{' '}
+            <code className="rounded bg-gray-100 px-1">npm run dev</code> o{' '}
+            <code className="rounded bg-gray-100 px-1">npm run preview</code>{' '}
+            desde esta carpeta del proyecto (el servidor de Vite expone el proxy a
+            Anthropic; Live Server u otro hosting estático sin proxy devuelve error
+            404).
           </p>
           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-xs font-medium text-gray-700">
