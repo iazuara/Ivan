@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import GastosCosto from './components/GastosCosto.jsx'
 import Margen from './components/Margen.jsx'
@@ -19,6 +19,11 @@ import {
   SAMPLE_DATA,
   emptyGastos,
 } from './utils/constantes.js'
+import {
+  extractJsonObjectFromText,
+  mergeCapturedState,
+  readFileAsBase64,
+} from './utils/pdfFacturas.js'
 
 const TABS = [
   { id: 'productos', label: 'Productos' },
@@ -28,6 +33,11 @@ const TABS = [
 ]
 
 const ANTHROPIC_MODEL = 'claude-sonnet-4-20250514'
+
+/** Header beta requerido por Anthropic para enviar PDFs en el cuerpo del mensaje. */
+const ANTHROPIC_BETA_PDFS = 'pdfs-2024-09-25'
+
+const MAX_PDF_BYTES = 24 * 1024 * 1024
 
 function newId() {
   return crypto.randomUUID()
@@ -71,6 +81,14 @@ export default function App() {
   const [iaLoading, setIaLoading] = useState(false)
   const [iaText, setIaText] = useState('')
   const [iaError, setIaError] = useState('')
+
+  const [pdfProveedor, setPdfProveedor] = useState(null)
+  const [pdfAgente, setPdfAgente] = useState(null)
+  const inputPdfProveedorRef = useRef(null)
+  const inputPdfAgenteRef = useRef(null)
+  const [pdfCapturaLoading, setPdfCapturaLoading] = useState(false)
+  const [pdfCapturaError, setPdfCapturaError] = useState('')
+  const [pdfCapturaExito, setPdfCapturaExito] = useState('')
 
   const resumen = useMemo(
     () =>
@@ -135,6 +153,12 @@ export default function App() {
     setDescuento(0)
     setIaText('')
     setIaError('')
+    setPdfProveedor(null)
+    setPdfAgente(null)
+    setPdfCapturaError('')
+    setPdfCapturaExito('')
+    if (inputPdfProveedorRef.current) inputPdfProveedorRef.current.value = ''
+    if (inputPdfAgenteRef.current) inputPdfAgenteRef.current.value = ''
   }, [])
 
   const addAdicional = useCallback(() => {
@@ -340,6 +364,173 @@ ${JSON.stringify(snapshotForIa, null, 2)}`
     }
   }, [snapshotForIa])
 
+  const capturarDesdeFacturasPdf = useCallback(async () => {
+    const key =
+      typeof localStorage !== 'undefined'
+        ? localStorage.getItem('anthropic_api_key')?.trim()
+        : ''
+    if (!key) {
+      setApiKeyDraft(
+        typeof localStorage !== 'undefined'
+          ? localStorage.getItem('anthropic_api_key') || ''
+          : '',
+      )
+      setApiModalOpen(true)
+      return
+    }
+    if (!pdfProveedor && !pdfAgente) {
+      setPdfCapturaError('Adjunta al menos un PDF (proveedor o agente aduanal).')
+      setPdfCapturaExito('')
+      return
+    }
+
+    for (const f of [pdfProveedor, pdfAgente].filter(Boolean)) {
+      if (f.size > MAX_PDF_BYTES) {
+        setPdfCapturaError(
+          `El archivo "${f.name}" supera el límite de ${MAX_PDF_BYTES / (1024 * 1024)} MB.`,
+        )
+        setPdfCapturaExito('')
+        return
+      }
+    }
+
+    setPdfCapturaLoading(true)
+    setPdfCapturaError('')
+    setPdfCapturaExito('')
+
+    const instrucciones = `Eres un asistente de comercio exterior en México. Analiza los PDF adjuntos:
+- Si hay factura comercial / packing list del PROVEEDOR: extrae cada línea de mercancía.
+- Si hay factura o desglose del AGENTE ADUANAL: extrae montos en MXN de honorarios, fletes, aranceles (IGI, DTA), seguros, almacenaje, etc.
+
+Responde ÚNICAMENTE con un objeto JSON válido (sin markdown ni texto fuera del JSON), con esta forma exacta en claves:
+{
+  "tipoCambio": número o null (tipo de cambio USD→MXN si aparece explícito),
+  "productos": [
+    {
+      "descripcion": "texto",
+      "cantidad": número entero o decimal,
+      "precioUsd": número (precio UNITARIO en USD por pieza, no total de línea),
+      "pesoKg": número (kg por pieza; 0 si no consta),
+      "margenPct": número opcional (si no hay dato, omite la clave)
+    }
+  ],
+  "gastos": {
+    "flete": número en MXN,
+    "seguro": número,
+    "igi": número,
+    "dta": número,
+    "prv": número,
+    "incrementables": número,
+    "honorarios": número,
+    "almacen": número,
+    "documentacion": número,
+    "flete_local": número,
+    "cove": número
+  }
+}
+
+Reglas:
+- Incluye en "productos" una entrada por cada ítem de mercancía relevante.
+- "gastos": solo incluye claves para las que encuentres monto en MXN en los PDFs; puedes omitir "gastos" si no hay datos.
+- Claves de gastos permitidas (solo estas): ${COST_KEYS.join(', ')}.
+- Si un dato numérico no está claro, usa 0 o null para tipoCambio.`
+
+    try {
+      const content = [{ type: 'text', text: instrucciones }]
+
+      if (pdfProveedor) {
+        const b64 = await readFileAsBase64(pdfProveedor)
+        content.push({
+          type: 'text',
+          text: '--- PDF: FACTURA / DOCUMENTO DEL PROVEEDOR ---',
+        })
+        content.push({
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: 'application/pdf',
+            data: b64,
+          },
+        })
+      }
+
+      if (pdfAgente) {
+        const b64 = await readFileAsBase64(pdfAgente)
+        content.push({
+          type: 'text',
+          text: '--- PDF: FACTURA O DESGLOSE DEL AGENTE ADUANAL ---',
+        })
+        content.push({
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: 'application/pdf',
+            data: b64,
+          },
+        })
+      }
+
+      const res = await fetch('/anthropic-api/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': ANTHROPIC_BETA_PDFS,
+        },
+        body: JSON.stringify({
+          model: ANTHROPIC_MODEL,
+          max_tokens: 8192,
+          messages: [{ role: 'user', content }],
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const msg =
+          data?.error?.message ||
+          data?.message ||
+          `Error HTTP ${res.status}`
+        throw new Error(msg)
+      }
+      const text =
+        data?.content?.map((b) => (b.text ? b.text : '')).join('\n') || ''
+      const raw = extractJsonObjectFromText(text)
+      const merged = mergeCapturedState(raw, { newId })
+
+      if (merged.tipoCambio != null) {
+        setTipoCambio(merged.tipoCambio)
+      }
+      if (merged.productos?.length) {
+        setProductos(merged.productos)
+      }
+      if (merged.gastos) {
+        setGastos((prev) => ({ ...prev, ...merged.gastos }))
+      }
+
+      const nProd = merged.productos?.length ?? 0
+      const nGas = merged.gastos ? Object.keys(merged.gastos).length : 0
+      if (!nProd && !merged.tipoCambio && !nGas) {
+        throw new Error(
+          'La IA no devolvió productos ni gastos reconocibles. Revisa los PDF o inténtalo de nuevo.',
+        )
+      }
+
+      setPdfCapturaExito(
+        `Captura aplicada: ${nProd} producto(s)` +
+          (merged.tipoCambio != null ? `, tipo de cambio ${merged.tipoCambio}` : '') +
+          (nGas ? `, ${nGas} concepto(s) de gasto actualizado(s)` : '') +
+          '.',
+      )
+      setTab('productos')
+    } catch (e) {
+      setPdfCapturaError(
+        e?.message || 'No se pudo extraer la información de los PDF.',
+      )
+    } finally {
+      setPdfCapturaLoading(false)
+    }
+  }, [pdfProveedor, pdfAgente])
+
   const cycleCurrency = useCallback(() => {
     setDisplayCurrency((m) =>
       m === 'MXN' ? 'USD' : m === 'USD' ? 'ambas' : 'MXN',
@@ -394,6 +585,77 @@ ${JSON.stringify(snapshotForIa, null, 2)}`
             </button>
           ))}
         </div>
+
+        <section className="mb-6 rounded-lg border border-gray-300 bg-white p-4 shadow-sm">
+          <h2 className="text-sm font-semibold text-gray-900">
+            Facturas PDF (proveedor y agente aduanal)
+          </h2>
+          <p className="mt-1 text-xs text-gray-600">
+            Sube la factura comercial del proveedor y/o la del agente aduanal. La IA
+            leerá los PDF y rellenará productos (y gastos en MXN si constan en la
+            documentación del agente). Requiere API Key y el proxy de Vite en
+            desarrollo.
+          </p>
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+            <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-xs font-medium text-gray-700">
+              PDF proveedor
+              <input
+                ref={inputPdfProveedorRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                className="text-xs file:mr-2 file:rounded file:border-0 file:bg-blue-50 file:px-2 file:py-1 file:text-blue-700"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  setPdfProveedor(f || null)
+                  setPdfCapturaError('')
+                  setPdfCapturaExito('')
+                }}
+              />
+              {pdfProveedor && (
+                <span className="font-normal text-gray-500">
+                  {pdfProveedor.name} (
+                  {(pdfProveedor.size / 1024).toFixed(0)} KB)
+                </span>
+              )}
+            </label>
+            <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-xs font-medium text-gray-700">
+              PDF agente aduanal
+              <input
+                ref={inputPdfAgenteRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                className="text-xs file:mr-2 file:rounded file:border-0 file:bg-blue-50 file:px-2 file:py-1 file:text-blue-700"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  setPdfAgente(f || null)
+                  setPdfCapturaError('')
+                  setPdfCapturaExito('')
+                }}
+              />
+              {pdfAgente && (
+                <span className="font-normal text-gray-500">
+                  {pdfAgente.name} ({(pdfAgente.size / 1024).toFixed(0)} KB)
+                </span>
+              )}
+            </label>
+            <button
+              type="button"
+              onClick={capturarDesdeFacturasPdf}
+              disabled={pdfCapturaLoading || (!pdfProveedor && !pdfAgente)}
+              className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {pdfCapturaLoading
+                ? 'Extrayendo con IA…'
+                : 'Capturar desde PDFs'}
+            </button>
+          </div>
+          {pdfCapturaError && (
+            <p className="mt-2 text-sm text-red-600">{pdfCapturaError}</p>
+          )}
+          {pdfCapturaExito && (
+            <p className="mt-2 text-sm text-green-700">{pdfCapturaExito}</p>
+          )}
+        </section>
 
         <div className="mb-4 flex flex-wrap gap-2">
           <button
@@ -535,9 +797,10 @@ ${JSON.stringify(snapshotForIa, null, 2)}`
               API Key de Anthropic
             </h2>
             <p className="mt-2 text-sm text-gray-600">
-              Se guarda solo en el navegador (localStorage). No se envía a ningún
-              servidor distinto de la API de Anthropic a través del proxy de
-              desarrollo de Vite.
+              Se guarda solo en el navegador (localStorage). La misma clave se usa
+              para el análisis del costeo y para leer facturas PDF (Anthropic con
+              soporte de documentos). En desarrollo, las peticiones pasan por el
+              proxy de Vite hacia la API de Anthropic.
             </p>
             <input
               type="password"
