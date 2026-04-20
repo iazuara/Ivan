@@ -37,7 +37,7 @@ const TABS = [
   { id: 'margen', label: 'Márgenes' },
 ]
 
-const ANTHROPIC_MODEL = 'claude-sonnet-4-20250514'
+const ANTHROPIC_MODEL = 'claude-sonnet-4-6'
 
 /** Header beta requerido por Anthropic para enviar PDFs en el cuerpo del mensaje. */
 const ANTHROPIC_BETA_PDFS = 'pdfs-2024-09-25'
@@ -597,9 +597,10 @@ Reglas:
             documentación del agente). Requiere API Key y ejecutar la app con{' '}
             <code className="rounded bg-gray-100 px-1">npm run dev</code> o{' '}
             <code className="rounded bg-gray-100 px-1">npm run preview</code>{' '}
-            desde esta carpeta del proyecto (el servidor de Vite expone el proxy a
-            Anthropic; Live Server u otro hosting estático sin proxy devuelve error
-            404).
+            desde esta carpeta del proyecto. Tras actualizar dependencias o
+            vite.config.js, reinicia el servidor (Ctrl+C y otra vez «npm run dev»).
+            Abre la URL de la terminal; Live Server u hosting estático sin Node dan
+            404.
           </p>
           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-xs font-medium text-gray-700">

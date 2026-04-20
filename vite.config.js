@@ -1,38 +1,35 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { createProxyMiddleware } from 'http-proxy-middleware'
 
-function buildAnthropicProxy(env) {
-  const base = env.VITE_BASE || '/'
-  const trimmed = base.replace(/\/$/, '')
-  const prefix = trimmed ? `${trimmed}/anthropic-api` : '/anthropic-api'
-
-  return {
-    [prefix]: {
+/**
+ * Proxy explícito (Connect) hacia Anthropic.
+ * En algunos entornos el `server.proxy` integrado de Vite no intercepta bien las peticiones;
+ * este middleware se registra con enforce: 'pre' para ir antes del fallback SPA.
+ */
+function anthropicProxyPlugin() {
+  const factory = () =>
+    createProxyMiddleware({
+      pathFilter: '/anthropic-api',
       target: 'https://api.anthropic.com',
       changeOrigin: true,
       secure: true,
-      rewrite: (path) => {
-        if (!path.startsWith(prefix)) return path
-        const rest = path.slice(prefix.length)
-        return rest.startsWith('/') ? rest : `/${rest}`
-      },
+      pathRewrite: { '^/anthropic-api': '' },
+    })
+
+  return {
+    name: 'anthropic-proxy',
+    enforce: 'pre',
+    configureServer(server) {
+      server.middlewares.use(factory())
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(factory())
     },
   }
 }
 
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '')
-  const base = env.VITE_BASE || '/'
-
-  return {
-    base,
-    plugins: [react()],
-    server: {
-      proxy: buildAnthropicProxy(env),
-    },
-    preview: {
-      proxy: buildAnthropicProxy(env),
-    },
-  }
+export default defineConfig({
+  plugins: [anthropicProxyPlugin(), react()],
 })

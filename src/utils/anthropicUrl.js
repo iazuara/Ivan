@@ -1,16 +1,12 @@
 /**
- * URL del endpoint Messages de Anthropic vía proxy de Vite.
- * - Si defines `VITE_ANTHROPIC_MESSAGES_URL` (absoluta o relativa), se usa tal cual.
- * - Si no, se antepone `import.meta.env.BASE_URL` (subcarpeta en GitHub Pages, etc.).
+ * URL del endpoint Messages de Anthropic vía proxy local (Vite dev/preview).
+ * - Si defines `VITE_ANTHROPIC_MESSAGES_URL`, se usa (URL absoluta o ruta propia).
+ * - Por defecto: `/anthropic-api/v1/messages` (plugin en vite.config.js).
  */
 export function getAnthropicMessagesUrl() {
   const custom = import.meta.env.VITE_ANTHROPIC_MESSAGES_URL
   if (custom) return String(custom).trim()
-
-  const base = import.meta.env.BASE_URL || '/'
-  const trimmed = base.replace(/\/$/, '')
-  const segment = `${trimmed}/anthropic-api/v1/messages`.replace(/\/+/g, '/')
-  return segment.startsWith('/') ? segment : `/${segment}`
+  return '/anthropic-api/v1/messages'
 }
 
 export async function readAnthropicErrorDetail(res) {
@@ -25,9 +21,10 @@ export async function readAnthropicErrorDetail(res) {
 
 export function hintAnthropic404() {
   return (
-    'HTTP 404: la ruta del proxy no existe en este servidor. ' +
-    'Ejecuta la app con «npm run dev» o «npm run preview» dentro de la carpeta costeo-importacion (debe estar activo Vite). ' +
-    'No uses Live Server ni abras dist/index.html sin Vite: no hay proxy a Anthropic. ' +
-    'Si publicas en un subdirectorio, define VITE_BASE en .env (p. ej. /repo/) y reconstruye, o usa VITE_ANTHROPIC_MESSAGES_URL hacia tu propio proxy.'
+    'HTTP 404: no se encontró el proxy hacia Anthropic en este servidor. ' +
+    '1) En la carpeta costeo-importacion ejecuta «npm run dev» (o «npm run preview» tras «npm run build»). ' +
+    '2) Abre exactamente la URL que muestra la terminal (p. ej. http://localhost:5173/), no Live Server ni otro preview. ' +
+    '3) Tras cambiar vite.config.js o instalar dependencias, detén el servidor (Ctrl+C) y vuelve a iniciarlo. ' +
+    '4) Si despliegas en hosting estático sin Node, define VITE_ANTHROPIC_MESSAGES_URL con la URL de tu backend proxy.'
   )
 }
