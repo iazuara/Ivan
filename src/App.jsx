@@ -4,6 +4,7 @@ import GastosCosto from './components/GastosCosto.jsx'
 import Margen from './components/Margen.jsx'
 import Productos from './components/Productos.jsx'
 import Resumen from './components/Resumen.jsx'
+import Resultados from './components/Resultados.jsx'
 import {
   costoUnitarioMxnPorLinea,
   getResumen,
@@ -34,8 +35,9 @@ import {
 const TABS = [
   { id: 'productos', label: 'Productos' },
   { id: 'gastos', label: 'Gastos al Costo' },
+  { id: 'resultados', label: 'Resultados' },
   { id: 'resumen', label: 'Resumen' },
-  { id: 'margen', label: 'Márgenes' },
+  { id: 'margen', label: 'Calculadora margen' },
 ]
 
 const ANTHROPIC_MODEL = 'claude-sonnet-4-6'
@@ -799,6 +801,15 @@ Reglas:
             onDeleteAdicional={deleteAdicional}
             descuento={descuento}
             onDescuentoChange={setDescuento}
+          />
+        )}
+        {tab === 'resultados' && (
+          <Resultados
+            productos={productos}
+            gastos={gastos}
+            tipoCambio={tipoCambio}
+            gastosAdicionales={gastosAdicionales}
+            descuento={descuento}
           />
         )}
         {tab === 'resumen' && (

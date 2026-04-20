@@ -315,3 +315,59 @@ export function precioVentaPorLinea(costoUnitMxn, margenPct) {
 export function margenMxnPorPieza(precioVenta, costoUnitMxn) {
   return (Number(precioVenta) || 0) - (Number(costoUnitMxn) || 0)
 }
+
+/**
+ * Claves de gasto que en "Resultados" se prorratean por piezas (pool agencia + fletes/seguro).
+ * No incluye IGI, DTA ni PRV (van aparte). IVA no entra.
+ */
+export const RESULTADOS_AGENCY_POOL_KEYS = [
+  'flete',
+  'seguro',
+  'honorarios',
+  'almacen',
+  'documentacion',
+  'flete_local',
+  'cove',
+  'incrementables',
+]
+
+/**
+ * Gastos prorrateados por línea para la pestaña Resultados (sin IVA):
+ * - IGI: proporcional al valor MXN de mercancía de la línea.
+ * - DTA y PRV: entre total de piezas.
+ * - Pool agencia (flete, seguro, honorarios, almacén, documentación, flete local, COVE,
+ *   incrementables) + gastos adicionales − descuento; luego entre total de piezas.
+ */
+export function gastosProrrateadosPorLineaResultados(
+  productos,
+  gastos,
+  tipoCambio,
+  gastosAdicionales,
+  descuento,
+) {
+  const tc = Number(tipoCambio) || 0
+  const totalValMxn = totalValorMercanciaMxn(productos, tc)
+  const igi = Number(gastos.igi) || 0
+  const dta = Number(gastos.dta) || 0
+  const prv = Number(gastos.prv) || 0
+
+  const lineIgi =
+    totalValMxn > 0
+      ? productos.map((p) => valorMercanciaMxnLinea(p, tc) * (igi / totalValMxn))
+      : productos.map(() => 0)
+
+  const lineDta = prorrateoPorPiezas(productos, dta)
+  const linePrv = prorrateoPorPiezas(productos, prv)
+
+  let pool = RESULTADOS_AGENCY_POOL_KEYS.reduce(
+    (s, k) => s + (Number(gastos[k]) || 0),
+    0,
+  )
+  pool += sumAdicionales(gastosAdicionales)
+  pool -= Number(descuento) || 0
+  if (pool < 0) pool = 0
+
+  const lineAgency = prorrateoPorPiezas(productos, pool)
+
+  return productos.map((_, i) => lineIgi[i] + lineDta[i] + linePrv[i] + lineAgency[i])
+}
