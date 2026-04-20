@@ -9,6 +9,16 @@ export function getAnthropicMessagesUrl() {
   return '/anthropic-api/v1/messages'
 }
 
+/** URL absoluta al mismo origen (evita resoluciones raras con previews embebidos). */
+export function resolveAnthropicFetchUrl() {
+  const path = getAnthropicMessagesUrl()
+  if (/^https?:\/\//i.test(path)) return path
+  if (typeof window === 'undefined') return path
+  return new URL(path, window.location.origin).href
+}
+
+export const ANTHROPIC_PROXY_CHECK_URL = '/__anthropic_proxy_check'
+
 export async function readAnthropicErrorDetail(res) {
   const raw = await res.text()
   try {
@@ -22,9 +32,12 @@ export async function readAnthropicErrorDetail(res) {
 export function hintAnthropic404() {
   return (
     'HTTP 404: no se encontró el proxy hacia Anthropic en este servidor. ' +
-    '1) En la carpeta costeo-importacion ejecuta «npm run dev» (o «npm run preview» tras «npm run build»). ' +
-    '2) Abre exactamente la URL que muestra la terminal (p. ej. http://localhost:5173/), no Live Server ni otro preview. ' +
-    '3) Tras cambiar vite.config.js o instalar dependencias, detén el servidor (Ctrl+C) y vuelve a iniciarlo. ' +
-    '4) Si despliegas en hosting estático sin Node, define VITE_ANTHROPIC_MESSAGES_URL con la URL de tu backend proxy.'
+    '1) Terminal → carpeta costeo-importacion → «npm run dev» (o «npm run build» y luego «npm run preview»). ' +
+    '2) En el navegador abre solo la URL que imprime Vite (p. ej. http://localhost:5173/), no Live Server ni abrir dist/index.html a pelo. ' +
+    '3) Prueba en la misma pestaña: ' +
+    ANTHROPIC_PROXY_CHECK_URL +
+    ' — debe verse JSON {"ok":true,...}; si da 404, esta página no la está sirviendo Vite. ' +
+    '4) Reinicia Vite tras cambiar vite.config.js (Ctrl+C y otra vez npm run dev). ' +
+    '5) Hosting estático sin Node: define VITE_ANTHROPIC_MESSAGES_URL hacia tu backend proxy.'
   )
 }

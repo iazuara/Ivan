@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import GastosCosto from './components/GastosCosto.jsx'
 import Margen from './components/Margen.jsx'
@@ -25,9 +25,10 @@ import {
   readFileAsBase64,
 } from './utils/pdfFacturas.js'
 import {
-  getAnthropicMessagesUrl,
+  ANTHROPIC_PROXY_CHECK_URL,
   hintAnthropic404,
   readAnthropicErrorDetail,
+  resolveAnthropicFetchUrl,
 } from './utils/anthropicUrl.js'
 
 const TABS = [
@@ -41,6 +42,11 @@ const ANTHROPIC_MODEL = 'claude-sonnet-4-6'
 
 /** Header beta requerido por Anthropic para enviar PDFs en el cuerpo del mensaje. */
 const ANTHROPIC_BETA_PDFS = 'pdfs-2024-09-25'
+
+/** Obligatorio si la petición sale del navegador hacia api.anthropic.com (CORS). El proxy de Vite reenvía este header. */
+const ANTHROPIC_BROWSER_ACCESS = {
+  'anthropic-dangerous-direct-browser-access': 'true',
+}
 
 const MAX_PDF_BYTES = 24 * 1024 * 1024
 
@@ -94,6 +100,27 @@ export default function App() {
   const [pdfCapturaLoading, setPdfCapturaLoading] = useState(false)
   const [pdfCapturaError, setPdfCapturaError] = useState('')
   const [pdfCapturaExito, setPdfCapturaExito] = useState('')
+  /** null = comprobando; false = esta URL no es el dev server de Vite de este proyecto */
+  const [viteProxyOk, setViteProxyOk] = useState(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (window.location.protocol !== 'http:' && window.location.protocol !== 'https:')
+      return
+    let cancel = false
+    fetch(new URL(ANTHROPIC_PROXY_CHECK_URL, window.location.origin).href, {
+      cache: 'no-store',
+    })
+      .then((r) => {
+        if (!cancel) setViteProxyOk(r.ok)
+      })
+      .catch(() => {
+        if (!cancel) setViteProxyOk(false)
+      })
+    return () => {
+      cancel = true
+    }
+  }, [])
 
   const resumen = useMemo(
     () =>
@@ -338,12 +365,13 @@ posibles riesgos o omisiones, y sugerencias breves. Responde en español.
 Datos:
 ${JSON.stringify(snapshotForIa, null, 2)}`
 
-      const res = await fetch(getAnthropicMessagesUrl(), {
+      const res = await fetch(resolveAnthropicFetchUrl(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-api-key': key,
           'anthropic-version': '2023-06-01',
+          ...ANTHROPIC_BROWSER_ACCESS,
         },
         body: JSON.stringify({
           model: ANTHROPIC_MODEL,
@@ -473,13 +501,14 @@ Reglas:
         })
       }
 
-      const res = await fetch(getAnthropicMessagesUrl(), {
+      const res = await fetch(resolveAnthropicFetchUrl(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-api-key': key,
           'anthropic-version': '2023-06-01',
           'anthropic-beta': ANTHROPIC_BETA_PDFS,
+          ...ANTHROPIC_BROWSER_ACCESS,
         },
         body: JSON.stringify({
           model: ANTHROPIC_MODEL,
@@ -568,6 +597,16 @@ Reglas:
           </label>
         </div>
       </header>
+
+      {viteProxyOk === false && (
+        <div className="border-b border-amber-400 bg-amber-50 px-4 py-3 text-center text-sm text-amber-950">
+          <strong>Esta página no la está sirviendo el Vite de este proyecto</strong> (no se
+          alcanzó {ANTHROPIC_PROXY_CHECK_URL}). Las llamadas a IA darán 404. Cierra esta
+          pestaña, en la carpeta <code className="rounded bg-white px-1">costeo-importacion</code>{' '}
+          ejecuta <code className="rounded bg-white px-1">npm run dev</code> y abre la URL
+          que muestre la terminal (p. ej. http://localhost:5173/).
+        </div>
+      )}
 
       <div className="mx-auto max-w-6xl px-4 py-4">
         <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-gray-200">
